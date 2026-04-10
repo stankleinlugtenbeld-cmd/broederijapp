@@ -23,9 +23,18 @@ interface DrawingState {
   currentY: number
 }
 
+// Get canvas-space position accounting for pan/zoom
+function getCanvasPos(stage: Konva.Stage) {
+  const transform = stage.getAbsoluteTransform().copy().invert()
+  return transform.point(stage.getPointerPosition()!)
+}
+
 export default function FloorPlanCanvas({ rooms, editMode, selectedRoomId, onSelectRoom, onSaveRoom, onDeleteRoom, farmId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<Konva.Stage>(null)
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 })
+  const [stageScale, setStageScale] = useState(1)
+  const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
   const [showNameModal, setShowNameModal] = useState(false)
   const [pendingRect, setPendingRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
@@ -34,13 +43,15 @@ export default function FloorPlanCanvas({ rooms, editMode, selectedRoomId, onSel
   const transformerRef = useRef<Konva.Transformer>(null)
   const selectedNodeRef = useRef<Konva.Rect | null>(null)
   const colorIdx = useRef(0)
+  // Track pinch zoom
+  const lastDist = useRef(0)
 
   useEffect(() => {
     const observer = new ResizeObserver(() => {
       if (containerRef.current) {
         setStageSize({
           width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight
+          height: containerRef.current.offsetHeight,
         })
       }
     })
@@ -59,29 +70,130 @@ export default function FloorPlanCanvas({ rooms, editMode, selectedRoomId, onSel
     }
   }, [selectedRoomId, editMode])
 
+  // ── Zoom via scroll wheel ──────────────────────────────────────────────────
+  const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault()
+    const stage = stageRef.current
+    if (!stage) return
+    const scaleBy = 1.12
+    const oldScale = stageScale
+    const pointer = stage.getPointerPosition()!
+    const mousePointTo = {
+      x: (pointer.x - stagePos.x) / oldScale,
+      y: (pointer.y - stagePos.y) / oldScale,
+    }
+    const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy
+    const clamped = Math.min(Math.max(newScale, 0.15), 4)
+    setStageScale(clamped)
+    setStagePos({
+      x: pointer.x - mousePointTo.x * clamped,
+      y: pointer.y - mousePointTo.y * clamped,
+    })
+  }
+
+  // ── Fit all rooms in view ──────────────────────────────────────────────────
+  const fitAll = () => {
+    if (!rooms.length || !containerRef.current) return
+    const pad = 40
+    const minX = Math.min(...rooms.map(r => r.x))
+    const minY = Math.min(...rooms.map(r => r.y))
+    const maxX = Math.max(...rooms.map(r => r.x + r.width))
+    const maxY = Math.max(...rooms.map(r => r.y + r.height))
+    const contentW = maxX - minX
+    const contentH = maxY - minY
+    const scaleX = (stageSize.width - pad * 2) / contentW
+    const scaleY = (stageSize.height - pad * 2) / contentH
+    const scale = Math.min(scaleX, scaleY, 2)
+    setStageScale(scale)
+    setStagePos({
+      x: (stageSize.width - contentW * scale) / 2 - minX * scale,
+      y: (stageSize.height - contentH * scale) / 2 - minY * scale,
+    })
+  }
+
+  // ── Mouse drawing ─────────────────────────────────────────────────────────
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     if (!editMode) return
-    if (e.target !== e.target.getStage()) return // only draw on empty canvas
-    const pos = e.target.getStage()!.getPointerPosition()!
+    if (e.target !== e.target.getStage()) return
+    const pos = getCanvasPos(e.target.getStage()!)
     setDrawing({ active: true, startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y })
   }
 
   const handleMouseMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
     if (!drawing?.active) return
-    const pos = e.target.getStage()!.getPointerPosition()!
+    const pos = getCanvasPos(e.target.getStage()!)
     setDrawing(prev => prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null)
   }
 
   const handleMouseUp = () => {
     if (!drawing?.active) return
-    const w = Math.abs(drawing.currentX - drawing.startX)
-    const h = Math.abs(drawing.currentY - drawing.startY)
+    finishDrawing(drawing)
+  }
+
+  // ── Touch drawing ─────────────────────────────────────────────────────────
+  const handleTouchStart = (e: Konva.KonvaEventObject<TouchEvent>) => {
+    const touches = e.evt.touches
+    // Two fingers = pinch zoom, not drawing
+    if (touches.length === 2) {
+      setDrawing(null)
+      lastDist.current = Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY
+      )
+      return
+    }
+    if (!editMode) return
+    if (e.target !== e.target.getStage()) return
+    const pos = getCanvasPos(e.target.getStage()!)
+    setDrawing({ active: true, startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y })
+  }
+
+  const handleTouchMove = (e: Konva.KonvaEventObject<TouchEvent>) => {
+    e.evt.preventDefault()
+    const touches = e.evt.touches
+    // Pinch zoom
+    if (touches.length === 2) {
+      const dist = Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY
+      )
+      if (lastDist.current > 0) {
+        const factor = dist / lastDist.current
+        const stage = stageRef.current
+        if (stage) {
+          const cx = (touches[0].clientX + touches[1].clientX) / 2 - stage.container().getBoundingClientRect().left
+          const cy = (touches[0].clientY + touches[1].clientY) / 2 - stage.container().getBoundingClientRect().top
+          const newScale = Math.min(Math.max(stageScale * factor, 0.15), 4)
+          setStagePos(prev => ({
+            x: cx - (cx - prev.x) * (newScale / stageScale),
+            y: cy - (cy - prev.y) * (newScale / stageScale),
+          }))
+          setStageScale(newScale)
+        }
+      }
+      lastDist.current = dist
+      return
+    }
+    if (!drawing?.active) return
+    const pos = getCanvasPos(e.target.getStage()!)
+    setDrawing(prev => prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null)
+  }
+
+  const handleTouchEnd = (e: Konva.KonvaEventObject<TouchEvent>) => {
+    lastDist.current = 0
+    if (!drawing?.active) return
+    finishDrawing(drawing)
+  }
+
+  const finishDrawing = (d: DrawingState) => {
+    const w = Math.abs(d.currentX - d.startX)
+    const h = Math.abs(d.currentY - d.startY)
     if (w > 20 && h > 20) {
       setPendingRect({
-        x: Math.min(drawing.startX, drawing.currentX),
-        y: Math.min(drawing.startY, drawing.currentY),
+        x: Math.min(d.startX, d.currentX),
+        y: Math.min(d.startY, d.currentY),
         width: w,
-        height: h
+        height: h,
       })
       setShowNameModal(true)
     }
@@ -108,18 +220,49 @@ export default function FloorPlanCanvas({ rooms, editMode, selectedRoomId, onSel
 
   return (
     <div ref={containerRef} style={{ flex: 1, position: 'relative', background: '#f8fafc', overflow: 'hidden' }}>
-      {editMode && (
-        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, background: 'white', borderRadius: 8, padding: '8px 12px', fontSize: 13, color: '#6b7280', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-          Click &amp; drag on empty space to draw a room
+      {/* Toolbar */}
+      <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        {editMode && (
+          <div style={{ background: 'white', borderRadius: 8, padding: '7px 12px', fontSize: 13, color: '#6b7280', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+            Drag empty space to draw a room
+          </div>
+        )}
+        {rooms.length > 0 && (
+          <button className="btn-secondary" style={{ fontSize: 12, padding: '5px 10px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }} onClick={fitAll}>
+            Fit all
+          </button>
+        )}
+      </div>
+
+      {/* Zoom indicator */}
+      <div style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 10, display: 'flex', gap: 6 }}>
+        <button className="btn-secondary" style={{ fontSize: 16, padding: '4px 10px', lineHeight: 1 }}
+          onClick={() => { const s = Math.min(stageScale * 1.2, 4); setStageScale(s) }}>+</button>
+        <div style={{ background: 'white', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#6b7280', lineHeight: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+          {Math.round(stageScale * 100)}%
         </div>
-      )}
+        <button className="btn-secondary" style={{ fontSize: 16, padding: '4px 10px', lineHeight: 1 }}
+          onClick={() => { const s = Math.max(stageScale / 1.2, 0.15); setStageScale(s) }}>−</button>
+      </div>
+
       <Stage
+        ref={stageRef}
         width={stageSize.width}
         height={stageSize.height}
+        scaleX={stageScale}
+        scaleY={stageScale}
+        x={stagePos.x}
+        y={stagePos.y}
+        draggable={!editMode}
+        onDragEnd={e => setStagePos({ x: e.target.x(), y: e.target.y() })}
+        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        style={{ cursor: editMode ? 'crosshair' : 'default' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{ cursor: editMode ? 'crosshair' : 'grab' }}
       >
         <Layer>
           {rooms.map(room => (
