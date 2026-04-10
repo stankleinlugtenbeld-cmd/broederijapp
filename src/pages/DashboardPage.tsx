@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const isSupplier = profile?.role === 'supplier'
 
   useEffect(() => {
-    if (!profile) return
+    if (!profile) { setLoading(false); return }
     const load = async () => {
       let q
       if (isSupplier) {

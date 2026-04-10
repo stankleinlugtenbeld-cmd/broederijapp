@@ -63,10 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: 'client',
         farmIds: []
       }
-      // Check invitations for brand-new users
+      // Write the doc first, then check invitations (updateDoc needs the doc to exist)
+      await setDoc(ref, newProfile)
       const farmIds = await applyInvitations(u.uid, u.email!, [])
       const profileWithFarms = { ...newProfile, farmIds }
-      await setDoc(ref, profileWithFarms)
       setProfile(profileWithFarms)
     } else {
       setProfile(snap.data() as UserProfile)
