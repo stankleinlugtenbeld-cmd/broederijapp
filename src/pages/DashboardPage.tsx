@@ -4,6 +4,7 @@ import { db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import type { Farm } from '../types'
+import AccessManager from '../components/AccessManager'
 
 export default function DashboardPage() {
   const { profile } = useAuth()
@@ -13,6 +14,7 @@ export default function DashboardPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
   const [newCode, setNewCode] = useState('')
+  const [managingFarm, setManagingFarm] = useState<Farm | null>(null)
 
   const isSupplier = profile?.role === 'supplier'
 
@@ -39,9 +41,10 @@ export default function DashboardPage() {
       name: newName,
       code: newCode,
       clientUids: [],
+      invitedEmails: [],
       createdAt: Date.now()
     })
-    setFarms(prev => [...prev, { id: ref.id, name: newName, code: newCode, clientUids: [], createdAt: Date.now() }])
+    setFarms(prev => [...prev, { id: ref.id, name: newName, code: newCode, clientUids: [], invitedEmails: [], createdAt: Date.now() }])
     setNewName(''); setNewCode(''); setShowAdd(false)
   }
 
@@ -85,16 +88,50 @@ export default function DashboardPage() {
               key={farm.id}
               className="card"
               style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }}
-              onClick={() => navigate(`/farm/${farm.id}`)}
               onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(37,99,235,0.15)')}
               onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.08)')}
             >
-              <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>{farm.code}</div>
-              <div style={{ fontWeight: 600, fontSize: 17 }}>{farm.name}</div>
-              <div style={{ marginTop: 12, fontSize: 12, color: '#9ca3af' }}>Click to open floor plan →</div>
+              <div
+                onClick={() => navigate(`/farm/${farm.id}`)}
+              >
+                <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>{farm.code}</div>
+                <div style={{ fontWeight: 600, fontSize: 17 }}>{farm.name}</div>
+                <div style={{ marginTop: 8, fontSize: 12, color: '#9ca3af' }}>
+                  {(farm.invitedEmails ?? []).length} user{(farm.invitedEmails ?? []).length !== 1 ? 's' : ''} with access
+                </div>
+              </div>
+              {isSupplier && (
+                <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn-primary"
+                    style={{ flex: 1, fontSize: 12, padding: '6px 0' }}
+                    onClick={e => { e.stopPropagation(); navigate(`/farm/${farm.id}`) }}
+                  >
+                    Open
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    style={{ flex: 1, fontSize: 12, padding: '6px 0' }}
+                    onClick={e => { e.stopPropagation(); setManagingFarm(farm) }}
+                  >
+                    Manage access
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
+      )}
+
+      {managingFarm && (
+        <AccessManager
+          farm={managingFarm}
+          onClose={() => setManagingFarm(null)}
+          onFarmUpdated={updated => {
+            setFarms(prev => prev.map(f => f.id === updated.id ? updated : f))
+            setManagingFarm(updated)
+          }}
+        />
       )}
     </div>
   )

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase'
 import type { UserProfile } from '../types'
 
@@ -14,6 +14,16 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null)
 
+// Check if this email has been invited to any farms and grant access
+async function applyInvitations(uid: string, email: string, currentFarmIds: string[]) {
+  const snap = await getDocs(query(collection(db, 'farms'), where('invitedEmails', 'array-contains', email)))
+  const newIds = snap.docs.map(d => d.id).filter(id => !currentFarmIds.includes(id))
+  if (newIds.length === 0) return currentFarmIds
+  const updated = [...currentFarmIds, ...newIds]
+  await updateDoc(doc(db, 'users', uid), { farmIds: updated })
+  return updated
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
@@ -26,7 +36,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const ref = doc(db, 'users', firebaseUser.uid)
         const snap = await getDoc(ref)
         if (snap.exists()) {
-          setProfile(snap.data() as UserProfile)
+          let p = snap.data() as UserProfile
+          if (p.role === 'client') {
+            const updatedFarmIds = await applyInvitations(p.uid, p.email, p.farmIds)
+            p = { ...p, farmIds: updatedFarmIds }
+          }
+          setProfile(p)
         }
       } else {
         setProfile(null)
@@ -41,7 +56,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const ref = doc(db, 'users', u.uid)
     const snap = await getDoc(ref)
     if (!snap.exists()) {
-      // New user — default role is client, supplier must be set manually in Firestore
       const newProfile: UserProfile = {
         uid: u.uid,
         email: u.email!,
@@ -49,8 +63,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role: 'client',
         farmIds: []
       }
-      await setDoc(ref, newProfile)
-      setProfile(newProfile)
+      // Check invitations for brand-new users
+      const farmIds = await applyInvitations(u.uid, u.email!, [])
+      const profileWithFarms = { ...newProfile, farmIds }
+      await setDoc(ref, profileWithFarms)
+      setProfile(profileWithFarms)
     } else {
       setProfile(snap.data() as UserProfile)
     }

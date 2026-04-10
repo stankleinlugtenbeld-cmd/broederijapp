@@ -11,6 +11,7 @@ export interface Farm {
   name: string
   code: string
   clientUids: string[]
+  invitedEmails: string[]
   createdAt: number
 }
 
