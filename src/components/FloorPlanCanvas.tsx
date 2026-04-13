@@ -227,6 +227,15 @@ export default function FloorPlanCanvas({ rooms, editMode, selectedRoomId, onSel
             Drag empty space to draw a room
           </div>
         )}
+        {editMode && selectedRoomId && (
+          <button
+            className="btn-danger"
+            style={{ fontSize: 12, padding: '5px 10px' }}
+            onClick={() => onDeleteRoom(selectedRoomId)}
+          >
+            Delete room
+          </button>
+        )}
         {rooms.length > 0 && (
           <button className="btn-secondary" style={{ fontSize: 12, padding: '5px 10px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }} onClick={fitAll}>
             Fit all
