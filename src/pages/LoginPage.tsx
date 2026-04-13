@@ -1,12 +1,12 @@
 import { useAuth } from '../contexts/AuthContext'
 
-// Detect WhatsApp, Instagram, Facebook and other in-app browsers
-// that block Google OAuth
+// Detect in-app browsers (WhatsApp, Instagram, Facebook etc.)
+// Real Safari on iOS always has "Version/X.X" in the UA.
+// In-app browsers (WKWebView) never do — even if they include "Safari".
 function isInAppBrowser() {
   const ua = navigator.userAgent
-  if (/FBAN|FBAV|Instagram|WhatsApp/i.test(ua)) return true
-  // iOS in-app browsers (WKWebView) don't include "Safari" in the UA
-  if (/iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua) && !/CriOS/i.test(ua)) return true
+  if (/FBAN|FBAV|Instagram|WhatsApp|Line|MicroMessenger/i.test(ua)) return true
+  if (/iPhone|iPad|iPod/i.test(ua) && !/Version\//i.test(ua) && !/CriOS/i.test(ua)) return true
   return false
 }
 
