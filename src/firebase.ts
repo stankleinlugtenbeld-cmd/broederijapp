@@ -7,7 +7,7 @@ import { getStorage } from 'firebase/storage'
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyAL85e7gh7J9jVhaxe4c4hIgoPXrhwCkxE",
-  authDomain: "broederijapp.firebaseapp.com",
+  authDomain: "broederijapp.vercel.app",
   projectId: "broederijapp",
   storageBucket: "broederijapp.firebasestorage.app",
   messagingSenderId: "902487958907",
