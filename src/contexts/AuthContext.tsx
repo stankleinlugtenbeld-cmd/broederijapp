@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase'
 import type { UserProfile } from '../types'
@@ -14,7 +14,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null)
 
-// Check if this email has been invited to any farms and grant access
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+
 async function applyInvitations(uid: string, email: string, currentFarmIds: string[]) {
   const snap = await getDocs(query(collection(db, 'farms'), where('invitedEmails', 'array-contains', email)))
   const newIds = snap.docs.map(d => d.id).filter(id => !currentFarmIds.includes(id))
@@ -22,6 +23,32 @@ async function applyInvitations(uid: string, email: string, currentFarmIds: stri
   const updated = [...currentFarmIds, ...newIds]
   await updateDoc(doc(db, 'users', uid), { farmIds: updated })
   return updated
+}
+
+async function resolveProfile(firebaseUser: User): Promise<UserProfile> {
+  const ref = doc(db, 'users', firebaseUser.uid)
+  const snap = await getDoc(ref)
+
+  if (!snap.exists()) {
+    // Brand new user — create their profile first, then apply invitations
+    const base: UserProfile = {
+      uid: firebaseUser.uid,
+      email: firebaseUser.email!,
+      displayName: firebaseUser.displayName || firebaseUser.email!,
+      role: 'client',
+      farmIds: []
+    }
+    await setDoc(ref, base)
+    const farmIds = await applyInvitations(base.uid, base.email, [])
+    return { ...base, farmIds }
+  }
+
+  let p = snap.data() as UserProfile
+  if (p.role === 'client') {
+    const updatedFarmIds = await applyInvitations(p.uid, p.email, p.farmIds)
+    p = { ...p, farmIds: updatedFarmIds }
+  }
+  return p
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -33,16 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser)
       if (firebaseUser) {
-        const ref = doc(db, 'users', firebaseUser.uid)
-        const snap = await getDoc(ref)
-        if (snap.exists()) {
-          let p = snap.data() as UserProfile
-          if (p.role === 'client') {
-            const updatedFarmIds = await applyInvitations(p.uid, p.email, p.farmIds)
-            p = { ...p, farmIds: updatedFarmIds }
-          }
-          setProfile(p)
-        }
+        const p = await resolveProfile(firebaseUser)
+        setProfile(p)
       } else {
         setProfile(null)
       }
@@ -51,25 +70,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signInWithGoogle = async () => {
-    const result = await signInWithPopup(auth, googleProvider)
-    const u = result.user
-    const ref = doc(db, 'users', u.uid)
-    const snap = await getDoc(ref)
-    if (!snap.exists()) {
-      const newProfile: UserProfile = {
-        uid: u.uid,
-        email: u.email!,
-        displayName: u.displayName || u.email!,
-        role: 'client',
-        farmIds: []
-      }
-      // Write the doc first, then check invitations (updateDoc needs the doc to exist)
-      await setDoc(ref, newProfile)
-      const farmIds = await applyInvitations(u.uid, u.email!, [])
-      const profileWithFarms = { ...newProfile, farmIds }
-      setProfile(profileWithFarms)
+    if (isMobile) {
+      // Redirect works reliably on iOS Safari and Android
+      await signInWithRedirect(auth, googleProvider)
     } else {
-      setProfile(snap.data() as UserProfile)
+      await signInWithPopup(auth, googleProvider)
     }
   }
 
