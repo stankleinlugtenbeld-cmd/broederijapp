@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User, onAuthStateChanged, signInWithPopup, getRedirectResult, signOut } from 'firebase/auth'
+import { User, onAuthStateChanged, signInWithRedirect, getRedirectResult, setPersistence, indexedDBLocalPersistence, signOut } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase'
 import type { UserProfile } from '../types'
@@ -28,7 +28,6 @@ async function resolveProfile(firebaseUser: User): Promise<UserProfile> {
   const snap = await getDoc(ref)
 
   if (!snap.exists()) {
-    // Brand new user — create their profile first, then apply invitations
     const base: UserProfile = {
       uid: firebaseUser.uid,
       email: firebaseUser.email!,
@@ -55,8 +54,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // On mobile, process the redirect result when the app loads after Google sign-in
-    getRedirectResult(auth).catch(() => {})
+    // Process redirect result — must be awaited before onAuthStateChanged
+    // to avoid a race where the user appears logged out on return from Google
+    const init = async () => {
+      try {
+        await getRedirectResult(auth)
+      } catch (e) {
+        console.error('Redirect sign-in error:', e)
+      }
+    }
+    init()
 
     return onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser)
@@ -71,7 +78,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signInWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider)
+    // Use IndexedDB persistence so Safari ITP doesn't clear the session
+    // during the cross-origin redirect to Google
+    await setPersistence(auth, indexedDBLocalPersistence)
+    await signInWithRedirect(auth, googleProvider)
   }
 
   const logout = () => signOut(auth)
