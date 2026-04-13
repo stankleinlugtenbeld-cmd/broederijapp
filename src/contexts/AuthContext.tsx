@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth'
+import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase'
 import type { UserProfile } from '../types'
@@ -57,6 +57,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // On mobile, process the redirect result when the app loads after Google sign-in
+    getRedirectResult(auth).catch(() => {})
+
     return onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser)
       if (firebaseUser) {
