@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User, onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth'
+import { User, onAuthStateChanged, signInWithPopup, getRedirectResult, signOut } from 'firebase/auth'
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { auth, db, googleProvider } from '../firebase'
 import type { UserProfile } from '../types'
@@ -13,8 +13,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
-
-const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
 async function applyInvitations(uid: string, email: string, currentFarmIds: string[]) {
   const snap = await getDocs(query(collection(db, 'farms'), where('invitedEmails', 'array-contains', email)))
@@ -73,12 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signInWithGoogle = async () => {
-    if (isMobile) {
-      // Redirect works reliably on iOS Safari and Android
-      await signInWithRedirect(auth, googleProvider)
-    } else {
-      await signInWithPopup(auth, googleProvider)
-    }
+    await signInWithPopup(auth, googleProvider)
   }
 
   const logout = () => signOut(auth)
